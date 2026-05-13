@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Generate C++ serialization/deserialization code from a JSON protocol definition."""
+
 import json
 import sys
 from pathlib import Path
@@ -45,7 +48,7 @@ def get_c_type(field_type: str) -> str:
 def load_protocol(json_path: str) -> dict:
     """Load and parse JSON protocol file."""
     try:
-        with open(json_path) as file:
+        with open(json_path, encoding="utf-8") as file:
             return json.load(file)
     except ValueError as e:
         print(f"invalid file: {e}")
@@ -296,9 +299,10 @@ def find_count_field(field_name: str, fields: list) -> Optional[str]:
 
 
 def generate_struct_definition(
-    struct_name: str, struct_data: dict, structs: dict = {}
+    struct_name: str, struct_data: dict, structs: Optional[dict] = None
 ) -> str:
     """Generate a data structure definition."""
+    structs = structs or {}
     output = f"struct {struct_name} {{\n"
 
     for field in struct_data["fields"]:
@@ -403,49 +407,10 @@ def generate_header(protocol: dict, namespace: str = "ptc") -> str:
 # Serialization Code Generation
 
 
-def serialize_array_element(
-    element_name: str,
-    element_type: str,
-    endianness: str,
-    struct_data: Optional[dict] = None,
-) -> str:
-    """Generate serialization code for an array element."""
-    output = ""
-
-    if element_type in TYPE_INFO:
-        output = generate_type_serialize_code(element_name, element_type, endianness, 2)
-    elif element_type == "string":
-        output = indent("{{", 2) + "\n"
-        output += (
-            indent(
-                f"uint32_t str_len = static_cast<uint32_t>({element_name}.size());", 3
-            )
-            + "\n"
-        )
-        output += indent(write_integer_bytes("str_len", 4, endianness), 3)
-        output += indent(f"for (char c : {element_name}) {{", 3) + "\n"
-        output += indent("buffer.push_back(c);", 4) + "\n"
-        output += indent("}}", 3) + "\n"
-        output += indent("}}", 2)
-    elif struct_data:
-        for field in struct_data["fields"]:
-            sf_name = field["name"]
-            sf_type = field["type"]
-            output += (
-                serialize_field_code(
-                    f"{element_name}.{sf_name}", sf_type, endianness, True, struct_data
-                )
-                + "\n"
-            )
-
-    return output
-
-
 def serialize_field_code(
     var_name: str,
     field_type: str,
     endianness: str,
-    in_loop: bool = False,
     max_length: Optional[int] = None,
 ) -> str:
     """Generate unindented serialization code for a single field."""
@@ -510,16 +475,13 @@ def generate_serialize_impl(
                             f"{field_name}[i].{sf_name}",
                             sf_type,
                             endianness,
-                            True,
                             sf_max_length,
                         ),
                         2,
                     )
             else:
                 output += indent(
-                    serialize_field_code(
-                        f"{field_name}[i]", element_type, endianness, True
-                    ),
+                    serialize_field_code(f"{field_name}[i]", element_type, endianness),
                     2,
                 )
 
@@ -544,7 +506,7 @@ def generate_serialize_impl(
                     sf_max_length = struct_field.get("max_length")
                     output += indent(
                         serialize_field_code(
-                            f"elem.{sf_name}", sf_type, endianness, True, sf_max_length
+                            f"elem.{sf_name}", sf_type, endianness, sf_max_length
                         ),
                         2,
                     )
@@ -582,10 +544,16 @@ def generate_serialize_impl(
     if compressed:
         output += "    // Compress the buffer using LZ4\n"
         output += "    std::vector<uint8_t> compressed_buffer;\n"
-        output += "    int max_compressed_size = LZ4_compressBound(static_cast<int>(uncompressed_buffer.size()));\n"
+        output += (
+            "    int max_compressed_size = "
+            "LZ4_compressBound(static_cast<int>(uncompressed_buffer.size()));\n"
+        )
         output += "    compressed_buffer.resize(max_compressed_size + 4);\n\n"
 
-        output += "    uint32_t uncompressed_size = static_cast<uint32_t>(uncompressed_buffer.size());\n"
+        output += (
+            "    uint32_t uncompressed_size = "
+            "static_cast<uint32_t>(uncompressed_buffer.size());\n"
+        )
         output += "    std::vector<uint8_t> size_bytes;\n"
         output += indent(
             write_integer_bytes("uncompressed_size", 4, endianness).replace(
@@ -604,7 +572,10 @@ def generate_serialize_impl(
 
         output += "    if (compressed_size <= 0) {\n"
         output += "        compressed_buffer.resize(4 + uncompressed_buffer.size());\n"
-        output += "        std::memcpy(compressed_buffer.data() + 4, uncompressed_buffer.data(), uncompressed_buffer.size());\n"
+        output += (
+            "        std::memcpy(compressed_buffer.data() + 4, "
+            "uncompressed_buffer.data(), uncompressed_buffer.size());\n"
+        )
         output += "    } else {\n"
         output += "        compressed_buffer.resize(4 + compressed_size);\n"
         output += "    }\n\n"
@@ -682,8 +653,6 @@ def generate_deserialize_impl(
                 for struct_field in struct_def["fields"]:
                     sf_name = struct_field["name"]
                     sf_type = struct_field["type"]
-                    c_type = get_c_type(sf_type) if sf_type in TYPE_INFO else sf_type
-
                     if sf_type in TYPE_INFO:
                         output += indent(
                             gen_deser_field(
@@ -693,7 +662,10 @@ def generate_deserialize_impl(
                         )
                     elif sf_type == "string":
                         max_len = struct_field["max_length"]
-                        output += f"        std::memcpy(msg.{field_name}[i].{sf_name}, actual_data.data() + offset, {max_len});\n"
+                        output += (
+                            f"        std::memcpy(msg.{field_name}[i].{sf_name}, "
+                            f"actual_data.data() + offset, {max_len});\n"
+                        )
                         output += f"        offset += {max_len};\n"
             else:
                 if element_type in TYPE_INFO:
@@ -723,7 +695,6 @@ def generate_deserialize_impl(
                 for struct_field in struct_def["fields"]:
                     sf_name = struct_field["name"]
                     sf_type = struct_field["type"]
-                    c_type = get_c_type(sf_type) if sf_type in TYPE_INFO else sf_type
 
                     if sf_type in TYPE_INFO:
                         output += indent(
@@ -732,7 +703,10 @@ def generate_deserialize_impl(
                         )
                     elif sf_type == "string":
                         max_len = struct_field["max_length"]
-                        output += f"        std::memcpy(elem.{sf_name}, actual_data.data() + offset, {max_len});\n"
+                        output += (
+                            f"        std::memcpy(elem.{sf_name}, "
+                            f"actual_data.data() + offset, {max_len});\n"
+                        )
                         output += f"        offset += {max_len};\n"
             else:
                 if element_type in TYPE_INFO:
@@ -755,7 +729,10 @@ def generate_deserialize_impl(
 
         elif field_type == "string":
             max_len = field["max_length"]
-            output += f"    std::memcpy(msg.{field_name}, actual_data.data() + offset, {max_len});\n"
+            output += (
+                f"    std::memcpy(msg.{field_name}, "
+                f"actual_data.data() + offset, {max_len});\n"
+            )
             output += f"    offset += {max_len};\n"
 
         elif field_type in TYPE_INFO:
@@ -793,7 +770,7 @@ def generate_source(protocol: dict, endianness: str, namespace: str = "ptc") -> 
 def write_file(filepath: str, content: str) -> None:
     """Write content to a file."""
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
-    with open(filepath, "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
 
 

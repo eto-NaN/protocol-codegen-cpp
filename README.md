@@ -9,7 +9,7 @@ protocol.json  →  protocol-codegen-cpp  →  generated_messages.hpp
                                         →  generated_messages.cpp
 ```
 
-Each message becomes a C++ struct inside `namespace net` with:
+Each message becomes a C++ struct with:
 - A `static constexpr uint32_t ID` identifying the message
 - A `serialize() const` method returning `std::vector<uint8_t>`
 - A `static deserialize(const std::vector<uint8_t>&)` factory method
@@ -17,8 +17,12 @@ Each message becomes a C++ struct inside `namespace net` with:
 ## Usage
 
 ```sh
-python3 generate_protocol.py protocol.json
+python3 generate_protocol.py [-n <namespace>] path_to.json
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-n <namespace>` | `ptc` | Namespace wrapping all generated types |
 
 Outputs:
 - `generated_messages.hpp`
@@ -99,7 +103,7 @@ Reusable composite types referenced as `element_type` in arrays. Supported field
 
 **Generated C++ (header)**
 ```cpp
-namespace net {
+namespace ptc {
 
 struct LOGIN {
     static constexpr uint32_t ID = 20;
@@ -119,7 +123,7 @@ net::LOGIN msg;
 std::strncpy(msg.username, "alice", 32);
 
 std::vector<uint8_t> packet = msg.serialize();
-net::LOGIN received = net::LOGIN::deserialize(packet);
+ptc::LOGIN received = ptc::LOGIN::deserialize(packet);
 ```
 
 ## Requirements

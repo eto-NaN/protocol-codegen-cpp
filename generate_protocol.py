@@ -373,7 +373,7 @@ def generate_struct_declaration(msg_name: str, msg_data: dict, structs: dict) ->
     return output
 
 
-def generate_header(protocol: dict) -> str:
+def generate_header(protocol: dict, namespace: str = "ptc") -> str:
     """Generate the complete .hpp header file."""
     output = "#pragma once\n"
     output += "#include <cstdint>\n"
@@ -387,7 +387,7 @@ def generate_header(protocol: dict) -> str:
     if needs_lz4:
         output += "#include <lz4.h>\n"
 
-    output += "\nnamespace net {\n\n"
+    output += f"\nnamespace {namespace} {{\n\n"
 
     structs = protocol.get("structs", {})
     if structs:
@@ -399,7 +399,7 @@ def generate_header(protocol: dict) -> str:
     for msg_name, msg_data in protocol["messages"].items():
         output += generate_struct_declaration(msg_name, msg_data, structs)
 
-    output += "}  // namespace net\n"
+    output += f"}}  // namespace {namespace}\n"
     return output
 
 
@@ -770,10 +770,10 @@ def generate_deserialize_impl(
     return output
 
 
-def generate_source(protocol: dict, endianness: str) -> str:
+def generate_source(protocol: dict, endianness: str, namespace: str = "ptc") -> str:
     """Generate the complete .cpp source file."""
     output = '#include "generated_messages.hpp"\n\n'
-    output += "namespace net {\n\n"
+    output += f"namespace {namespace} {{\n\n"
 
     structs = protocol.get("structs", {})
 
@@ -786,7 +786,7 @@ def generate_source(protocol: dict, endianness: str) -> str:
             msg_name, msg_data["fields"], endianness, structs, compressed
         )
 
-    output += "}  // namespace net\n"
+    output += f"}}  // namespace {namespace}\n"
     return output
 
 
@@ -797,20 +797,46 @@ def write_file(filepath: str, content: str) -> None:
         f.write(content)
 
 
-def main() -> None:
-    """Main entry point."""
-    if len(sys.argv) != 2:
-        print("Usage: ./generate_protocol.py path_to.json")
+def parse_args() -> tuple[str, str]:
+    """Parse command-line arguments. Returns (json_path, namespace)."""
+    args = sys.argv[1:]
+    namespace = "ptc"
+    json_path = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "-n":
+            if i + 1 >= len(args):
+                print("Error: -n requires a namespace name")
+                sys.exit(1)
+            namespace = args[i + 1]
+            i += 2
+        else:
+            if json_path is not None:
+                print("Error: unexpected argument '" + args[i] + "'")
+                sys.exit(1)
+            json_path = args[i]
+            i += 1
+
+    if json_path is None:
+        print("Usage: ./generate_protocol.py [-n <namespace>] path_to.json")
         sys.exit(1)
 
-    protocol = load_protocol(sys.argv[1])
+    return json_path, namespace
+
+
+def main() -> None:
+    """Main entry point."""
+    json_path, namespace = parse_args()
+
+    protocol = load_protocol(json_path)
     validate_protocol(protocol)
     endianness = get_endianness(protocol)
 
-    header = generate_header(protocol)
+    header = generate_header(protocol, namespace)
     write_file("generated_messages.hpp", header)
 
-    source = generate_source(protocol, endianness)
+    source = generate_source(protocol, endianness, namespace)
     write_file("generated_messages.cpp", source)
 
 

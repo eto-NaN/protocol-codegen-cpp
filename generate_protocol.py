@@ -25,9 +25,11 @@ TYPE_MAP = {name: info[1] for name, info in TYPE_INFO.items()}
 
 
 def indent(code: str, level: int = 1) -> str:
-    """Indent code by level*4 spaces. Handles multi-line strings."""
+    """Indent code by level*4 spaces. Preserves trailing newlines without adding trailing spaces."""
     indent_str = "    " * level
-    return indent_str + code.replace("\n", "\n" + indent_str)
+    stripped = code.rstrip("\n")
+    trailing = "\n" * (len(code) - len(stripped))
+    return indent_str + stripped.replace("\n", "\n" + indent_str) + trailing
 
 
 def get_type_bytes(field_type: str) -> int:
@@ -189,66 +191,60 @@ def get_endianness(protocol: dict) -> str:
 
 
 def write_integer_bytes(field_name: str, num_bytes: int, endianness: str) -> str:
-    """Generate code to write an integer in specified endianness."""
-    output = ""
+    """Generate unindented code to write an integer in specified endianness."""
     indices = range(num_bytes - 1, -1, -1) if endianness == "big" else range(num_bytes)
-
-    for i in indices:
-        output += f"    buffer.push_back(({field_name} >> {i * 8}) & 0xFF);\n"
-
-    return output
+    return "".join(
+        f"buffer.push_back(({field_name} >> {i * 8}) & 0xFF);\n" for i in indices
+    )
 
 
 def read_integer_bytes(
     field_name: str, num_bytes: int, c_type: str, endianness: str
 ) -> str:
-    """Generate code to read an integer in specified endianness."""
-    output = f"    {field_name} = "
+    """Generate unindented code to read an integer in specified endianness."""
     indices = (
         list(range(num_bytes - 1, -1, -1))
         if endianness == "big"
         else list(range(num_bytes))
     )
-
+    output = f"{field_name} = "
     for i, idx in enumerate(indices):
         if i > 0:
-            output += " |\n        "
-        shift = idx * 8
-        output += f"(static_cast<{c_type}>(data[offset + {i}]) << {shift})"
-
-    output += f";\n    offset += {num_bytes};\n"
+            output += " |\n    "
+        output += f"(static_cast<{c_type}>(data[offset + {i}]) << {idx * 8})"
+    output += f";\noffset += {num_bytes};\n"
     return output
 
 
 def generate_type_serialize_code(
-    var_name: str, field_type: str, endianness: str, indent_level: int = 1
+    var_name: str, field_type: str, endianness: str
 ) -> str:
-    """Generate serialization code for a primitive type."""
+    """Generate unindented serialization code for a primitive type."""
     if field_type not in TYPE_INFO:
         return ""
 
-    num_bytes, c_type = TYPE_INFO[field_type]
-    code = ""
+    num_bytes, _ = TYPE_INFO[field_type]
 
     if field_type in ("uint8", "int8"):
-        code = f"buffer.push_back({var_name});"
-    elif field_type in ("float", "double"):
-        uint_type = "uint32_t" if field_type == "float" else "uint64_t"
-        code = f"{{\n    {uint_type} temp;\n"
-        code += f"    std::memcpy(&temp, &{var_name}, sizeof({field_type}));\n"
-        code += write_integer_bytes("temp", num_bytes, endianness)
-        code += "}"
-    else:
-        code = write_integer_bytes(var_name, num_bytes, endianness).rstrip("\n")
+        return f"buffer.push_back({var_name});\n"
 
-    return indent(code, indent_level)
+    if field_type in ("float", "double"):
+        uint_type = "uint32_t" if field_type == "float" else "uint64_t"
+        return (
+            f"{{\n"
+            f"    {uint_type} temp;\n"
+            f"    std::memcpy(&temp, &{var_name}, sizeof({field_type}));\n"
+            + indent(write_integer_bytes("temp", num_bytes, endianness), 1)
+            + "}\n"
+        )
+
+    return write_integer_bytes(var_name, num_bytes, endianness)
 
 
 def gen_deser_field(var_name: str, field_type: str, endianness: str) -> str:
-    """Generate correct deserialization code for any primitive type.
+    """Generate unindented deserialization code for a primitive type.
 
     Properly handles float/double via uint temp + memcpy to avoid UB.
-    Returns code without leading indentation (use indent() on the result).
     """
     if field_type not in TYPE_INFO:
         return ""
@@ -256,7 +252,7 @@ def gen_deser_field(var_name: str, field_type: str, endianness: str) -> str:
     num_bytes, c_type = TYPE_INFO[field_type]
 
     if field_type in ("uint8", "int8"):
-        return f"{var_name} = actual_data[offset];\noffset += 1;"
+        return f"{var_name} = actual_data[offset];\noffset += 1;\n"
 
     if field_type in ("float", "double"):
         uint_type = "uint32_t" if field_type == "float" else "uint64_t"
@@ -264,7 +260,8 @@ def gen_deser_field(var_name: str, field_type: str, endianness: str) -> str:
         return (
             f"{{\n"
             f"    {uint_type} temp;\n"
-            + inner
+            + indent(inner.rstrip("\n"), 1)
+            + "\n"
             + f"    std::memcpy(&{var_name}, &temp, sizeof({field_type}));\n"
             f"}}\n"
         )
@@ -451,17 +448,15 @@ def serialize_field_code(
     in_loop: bool = False,
     max_length: Optional[int] = None,
 ) -> str:
-    """Generate serialization code for a single field."""
+    """Generate unindented serialization code for a single field."""
     if field_type in TYPE_INFO:
-        return generate_type_serialize_code(
-            var_name, field_type, endianness, 1 if not in_loop else 2
-        )
+        return generate_type_serialize_code(var_name, field_type, endianness)
 
     if field_type == "string":
-        level = 2 if in_loop else 1
-        return indent(
-            f"for (uint32_t i = 0; i < {max_length}; ++i) {{\n    buffer.push_back({var_name}[i]);\n}}",
-            level,
+        return (
+            f"for (uint32_t i = 0; i < {max_length}; ++i) {{\n"
+            f"    buffer.push_back({var_name}[i]);\n"
+            f"}}\n"
         )
 
     return ""
@@ -484,7 +479,7 @@ def generate_serialize_impl(
         output += "    std::vector<uint8_t> buffer;\n\n"
 
     output += "    // Write message ID\n"
-    output += write_integer_bytes("ID", 1, endianness)
+    output += indent(write_integer_bytes("ID", 1, endianness), 1)
     output += "\n"
 
     for field in fields:
@@ -510,22 +505,22 @@ def generate_serialize_impl(
                     sf_name = struct_field["name"]
                     sf_type = struct_field["type"]
                     sf_max_length = struct_field.get("max_length")
-                    output += (
+                    output += indent(
                         serialize_field_code(
                             f"{field_name}[i].{sf_name}",
                             sf_type,
                             endianness,
                             True,
                             sf_max_length,
-                        )
-                        + "\n"
+                        ),
+                        2,
                     )
             else:
-                output += (
+                output += indent(
                     serialize_field_code(
                         f"{field_name}[i]", element_type, endianness, True
-                    )
-                    + "\n"
+                    ),
+                    2,
                 )
 
             output += "    }\n"
@@ -547,11 +542,11 @@ def generate_serialize_impl(
                     sf_name = struct_field["name"]
                     sf_type = struct_field["type"]
                     sf_max_length = struct_field.get("max_length")
-                    output += (
+                    output += indent(
                         serialize_field_code(
                             f"elem.{sf_name}", sf_type, endianness, True, sf_max_length
-                        )
-                        + "\n"
+                        ),
+                        2,
                     )
             else:
                 if element_type == "string":
@@ -578,7 +573,9 @@ def generate_serialize_impl(
             output += "    }\n"
 
         else:
-            output += serialize_field_code(field_name, field_type, endianness) + "\n"
+            output += indent(
+                serialize_field_code(field_name, field_type, endianness), 1
+            )
 
         output += "\n"
 
@@ -590,9 +587,12 @@ def generate_serialize_impl(
 
         output += "    uint32_t uncompressed_size = static_cast<uint32_t>(uncompressed_buffer.size());\n"
         output += "    std::vector<uint8_t> size_bytes;\n"
-        output += "    " + write_integer_bytes(
-            "uncompressed_size", 4, endianness
-        ).replace("buffer.push_back", "size_bytes.push_back")
+        output += indent(
+            write_integer_bytes("uncompressed_size", 4, endianness).replace(
+                "buffer.push_back", "size_bytes.push_back"
+            ),
+            1,
+        )
         output += "    std::memcpy(compressed_buffer.data(), size_bytes.data(), 4);\n\n"
 
         output += "    int compressed_size = LZ4_compress_default(\n"

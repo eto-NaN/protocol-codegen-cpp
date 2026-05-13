@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Generate C++ serialization/deserialization code from a JSON protocol definition."""
 
 import json

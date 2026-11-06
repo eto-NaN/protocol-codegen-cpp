@@ -119,7 +119,7 @@ struct LOGIN {
 
 **Usage in C++**
 ```cpp
-net::LOGIN msg;
+ptc::LOGIN msg;
 std::strncpy(msg.username, "alice", 32);
 
 std::vector<uint8_t> packet = msg.serialize();

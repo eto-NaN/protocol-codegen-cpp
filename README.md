@@ -114,7 +114,7 @@ struct LOGIN {
     static LOGIN deserialize(const std::vector<uint8_t>& data);
 };
 
-}  // namespace net
+}  // namespace ptc
 ```
 
 **Usage in C++**
